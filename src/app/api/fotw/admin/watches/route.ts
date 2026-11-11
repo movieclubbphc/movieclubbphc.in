@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import dbConnect from '@/lib/dbConnect';
 import { authOptions } from '@/lib/auth';
 import { FOTW_ADMINS } from '@/lib/fotwConfig';
-import { FOTWFilm, FOTWUser } from '@/lib/fotw/schemas';
+import { FOTWFilm, FOTWUser, FOTWRating } from '@/lib/fotw/schemas';
 import { calculateUserStreak } from '@/lib/fotw/streaks';
 
 async function isAdmin() {
@@ -36,6 +36,20 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
+  const hasRating = body?.rating !== undefined && body?.rating !== null;
+  if (
+    hasRating &&
+    (typeof body.rating !== 'number' ||
+      !Number.isFinite(body.rating) ||
+      body.rating < 0.5 ||
+      body.rating > 5 ||
+      !Number.isInteger(body.rating * 2))
+  ) {
+    return NextResponse.json(
+      { message: 'Choose a rating from 0.5 to 5 stars in half-star steps.' },
+      { status: 400 }
+    );
+  }
   if (
     !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
     email.length > 254 ||
@@ -61,11 +75,22 @@ export async function POST(req: Request) {
       if (!user && !name) return { status: 400, message: 'Enter a name for the new member.' };
       // Preserve the existing email so older records and exact-match readers agree.
       const memberEmail = user?.email || email;
+      const saveRating = async () => {
+        if (!hasRating) return;
+        await FOTWRating.updateOne(
+          { userEmail: memberEmail, filmId: film._id },
+          { $set: { rating: body.rating } },
+          { upsert: true, runValidators: true, session }
+        );
+      };
       if (film.watchedBy.some((w) => w.userEmail.trim().toLowerCase() === email)) {
+        await saveRating();
         return {
           status: 200,
           alreadyWatched: true,
-          message: 'This member has already watched this film.',
+          message: hasRating
+            ? `Saved ${body.rating}/5 stars for ${user?.username || user?.name || name || memberEmail} on ${film.title}. Their watch was already recorded.`
+            : 'This member has already watched this film.',
         };
       }
 
@@ -92,10 +117,11 @@ export async function POST(req: Request) {
         },
         { upsert: true, session }
       );
+      await saveRating();
       return {
         status: 200,
         alreadyWatched: false,
-        message: `Recorded ${user?.username || user?.name || name} as having watched ${film.title}.`,
+        message: `Recorded ${user?.username || user?.name || name} as having watched ${film.title}${hasRating ? ` with a rating of ${body.rating}/5 stars` : ''}.`,
       };
     });
     const { status, ...payload } = result!;

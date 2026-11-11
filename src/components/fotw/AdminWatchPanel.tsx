@@ -28,6 +28,7 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [filmId, setFilmId] = useState('');
+  const [rating, setRating] = useState('');
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
 
   async function loadOptions() {
@@ -76,7 +77,12 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
       const res = await fetch('/api/fotw/admin/watches', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filmId, email, name: member?.name || name }),
+        body: JSON.stringify({
+          filmId,
+          email,
+          name: member?.name || name,
+          ...(rating ? { rating: Number(rating) } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Could not record the watch.');
@@ -106,7 +112,7 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
       </h2>
       <p className="mt-2 mb-5 text-sm text-[#8a9bb0]">
         Add a member’s watch for any current or previous film. Film totals, watch history,
-        leaderboard counts, and streaks update together.
+        leaderboard counts, and streaks update together. You can also add their rating.
       </p>
       {message && (
         <p
@@ -139,6 +145,7 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
                   onChange={() => {
                     setNewMember(false);
                     setEmail('');
+                    setRating('');
                     setMessage(null);
                   }}
                 />{' '}
@@ -152,6 +159,7 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
                   onChange={() => {
                     setNewMember(true);
                     setEmail('');
+                    setRating('');
                     setMessage(null);
                   }}
                 />{' '}
@@ -184,6 +192,7 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
                     value={email}
                     onChange={(e) => {
                       setEmail(e.target.value);
+                      setRating('');
                       setMessage(null);
                     }}
                     autoComplete="off"
@@ -215,6 +224,7 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);
+                    setRating('');
                     setMessage(null);
                   }}
                 >
@@ -251,6 +261,7 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
                 value={filmId}
                 onChange={(e) => {
                   setFilmId(e.target.value);
+                  setRating('');
                   setMessage(null);
                 }}
               >
@@ -267,9 +278,36 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
               </select>
               {!visibleFilms.length && <p className="text-xs text-[#8a9bb0]">No matching films.</p>}
             </div>
+            <div className="space-y-2">
+              <label htmlFor="watch-rating" className="text-sm text-[#8a9bb0]">
+                Rating (optional)
+              </label>
+              <select
+                id="watch-rating"
+                aria-describedby="watch-rating-help"
+                className={inputClass}
+                value={rating}
+                onChange={(e) => {
+                  setRating(e.target.value);
+                  setMessage(null);
+                }}
+              >
+                <option value="">Leave rating unchanged</option>
+                {Array.from({ length: 10 }, (_, i) => (i + 1) / 2).map((value) => (
+                  <option key={value} value={value}>
+                    {value} / 5 stars
+                  </option>
+                ))}
+              </select>
+              <p id="watch-rating-help" className="text-xs text-[#8a9bb0]">
+                Choose 0.5–5 stars. Saving a rating replaces this member’s existing rating for the
+                film. Leave blank to record only the watch and keep any existing rating.
+              </p>
+            </div>
             {alreadyWatched ? (
               <p role="status" className="text-sm text-[#40bcf4]">
-                This member has already watched this film. No changes needed.
+                This watch is already recorded. You can add or update their rating without changing
+                watch counts.
               </p>
             ) : (
               film &&
@@ -286,12 +324,22 @@ export default function AdminWatchPanel({ onRecorded }: { onRecorded: () => void
             <button
               type="submit"
               disabled={
-                saving || !filmId || !email || (newMember && !name.trim()) || alreadyWatched
+                saving ||
+                !filmId ||
+                !email ||
+                (newMember && !name.trim()) ||
+                (alreadyWatched && !rating)
               }
               className="flex items-center gap-2 rounded-lg bg-[#00e054] px-4 py-2.5 text-sm font-semibold text-black disabled:opacity-40"
             >
               {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-              {saving ? 'Recording…' : 'Record watch'}
+              {saving
+                ? 'Saving…'
+                : alreadyWatched
+                  ? 'Save rating'
+                  : rating
+                    ? 'Record watch & rating'
+                    : 'Record watch'}
             </button>
           </fieldset>
         </form>
