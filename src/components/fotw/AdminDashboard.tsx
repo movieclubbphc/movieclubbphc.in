@@ -7,6 +7,7 @@ import Link from 'next/link';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import Papa from 'papaparse';
 import AdminSeasonsPanel from './AdminSeasonsPanel';
+import AdminWatchPanel from './AdminWatchPanel';
 
 import { ChevronDown, Check } from 'lucide-react';
 function UserAutocomplete({
@@ -982,6 +983,19 @@ Bob,bob@example.com,0,0,,,,0,0,,
 
       {/* ── Seasons Management ───────────────────────────────── */}
       <AdminSeasonsPanel />
+
+      <AdminWatchPanel
+        onRecorded={() => {
+          // Refresh counters without resetting any unsaved film edits.
+          void fetch('/api/fotw/admin/leaderboard')
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              if (data) setLeaderboard(data.leaderboard || []);
+            })
+            .catch(console.error);
+          router.refresh();
+        }}
+      />
 
       {/* ── Add New Film ─────────────────────────────────────── */}
       <section
