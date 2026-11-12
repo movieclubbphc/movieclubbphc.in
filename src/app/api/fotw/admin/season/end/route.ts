@@ -9,7 +9,7 @@ import { FOTW_ADMINS } from '@/lib/fotwConfig';
 //
 // Old behaviour wrote a snapshot[] of user watch-counts and relied on
 // seasonNumber. Both are gone. The new behaviour:
-//   1. Finds the active season, stamps endDate = now, sets isActive = false.
+//   1. Closes the active season just before the next season starts.
 //   2. Creates a new season whose name is inferred from the total count.
 //
 // FOTWFilm documents are NOT touched. FOTWUser.seasonWatchedCount is NOT reset
@@ -30,7 +30,7 @@ export async function POST() {
     const activeSeason = await FOTWSeason.findOne({ isActive: true });
     if (activeSeason) {
       activeSeason.isActive = false;
-      activeSeason.endDate = now;
+      activeSeason.endDate = new Date(now.getTime() - 1);
       await activeSeason.save();
     }
 

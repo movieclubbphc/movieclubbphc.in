@@ -71,7 +71,7 @@ export async function GET(req: Request) {
       FOTWFilm.find({ dateSuggested: { $ne: null } })
         .select('_id title posterUrl language year isSilent isAfrican isSouthAmerican isFemaleDirector directorGender originCountry dateSuggested createdAt chosenBy chosenByEmail addedBy watchedCount watchedBy')
         .lean(),
-      FOTWSeason.findOne({ endDate: null }).select('_id startDate endDate').lean(),
+      FOTWSeason.findOne({ isActive: true }).select('_id startDate endDate').lean(),
       FOTWRating.find({}).select('filmId rating').lean(),
     ]);
 

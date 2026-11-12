@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import mongoose from 'mongoose';
+import { activateSeason } from '@/lib/fotw/activateSeason';
 import { getServerSession } from 'next-auth';
 import dbConnect from '@/lib/dbConnect';
 import { FOTWFilm, FOTWRating, FOTWSeason } from '@/lib/fotw/schemas';
@@ -131,7 +133,9 @@ export async function GET() {
                     // Rewrite $dateSuggested refs to $_film.dateSuggested
                     const key = Object.keys(cond)[0]; // $ne, $gte, $lte
                     const [field, val] = (cond as any)[key];
-                    return { [key]: [field === '$dateSuggested' ? '$_film.dateSuggested' : field, val] };
+                    return {
+                      [key]: [field === '$dateSuggested' ? '$_film.dateSuggested' : field, val],
+                    };
                   }),
                 },
                 then: b.then,
@@ -161,9 +165,7 @@ export async function GET() {
     // ------------------------------------------------------------------
     const filmFacet = filmResult[0] ?? { counts: [], uniqueWatchers: [] };
 
-    const countMap = new Map(
-      (filmFacet.counts as any[]).map((r: any) => [r._id.toString(), r])
-    );
+    const countMap = new Map((filmFacet.counts as any[]).map((r: any) => [r._id.toString(), r]));
     const watcherMap = new Map(
       (filmFacet.uniqueWatchers as any[]).map((r: any) => [r._id.toString(), r.uniqueWatchers])
     );
@@ -230,28 +232,30 @@ export async function POST(req: Request) {
         return NextResponse.json({ message: 'Invalid endDate' }, { status: 400 });
       }
       if (end <= start) {
-        return NextResponse.json(
-          { message: 'endDate must be after startDate' },
-          { status: 400 }
-        );
+        return NextResponse.json({ message: 'endDate must be after startDate' }, { status: 400 });
       }
     }
 
     // Derive isActive: explicit param, or implicit (ongoing = no endDate)
     const active = isActive ?? end === null;
 
-    // Ensure at most one active season at a time
-    if (active) {
-      await FOTWSeason.updateMany({ isActive: true }, { $set: { isActive: false } });
-    }
-
-    const season = await FOTWSeason.create({
-      name: name.trim(),
-      startDate: start,
-      endDate: end,
-      isActive: active,
-      letterboxdUrl: letterboxdUrl || '',
-      createdBy: session.user.email,
+    const createdBy = session.user.email;
+    const season = await mongoose.connection.transaction(async (dbSession) => {
+      if (active) await activateSeason(start, dbSession);
+      const [created] = await FOTWSeason.create(
+        [
+          {
+            name: name.trim(),
+            startDate: start,
+            endDate: end,
+            isActive: active,
+            letterboxdUrl: letterboxdUrl || '',
+            createdBy,
+          },
+        ],
+        { session: dbSession }
+      );
+      return created;
     });
 
     return NextResponse.json({ season }, { status: 201 });

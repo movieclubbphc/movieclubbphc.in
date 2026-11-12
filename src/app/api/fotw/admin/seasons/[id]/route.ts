@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import mongoose from 'mongoose';
+import { activateSeason } from '@/lib/fotw/activateSeason';
 import { getServerSession } from 'next-auth';
 import dbConnect from '@/lib/dbConnect';
 import { FOTWSeason } from '@/lib/fotw/schemas';
@@ -11,10 +13,7 @@ import { FOTW_ADMINS } from '@/lib/fotwConfig';
 // Validation mirrors POST: endDate must be after startDate if both present.
 // Promoting a season (isActive: true) demotes all others first.
 // ---------------------------------------------------------------------------
-export async function PATCH(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const [session] = await Promise.all([getServerSession(authOptions), dbConnect()]);
     if (!session?.user?.email || !FOTW_ADMINS.includes(session.user.email)) {
@@ -74,8 +73,7 @@ export async function PATCH(
 
     // Cross-field date validation — we may need to read the existing doc if
     // only one of the two dates is being updated.
-    const needsDateCheck =
-      parsedStart !== undefined || parsedEnd !== undefined;
+    const needsDateCheck = parsedStart !== undefined || parsedEnd !== undefined;
 
     if (needsDateCheck) {
       const existing = await FOTWSeason.findById(id).select('startDate endDate').lean();
@@ -87,33 +85,27 @@ export async function PATCH(
       const effectiveEnd = parsedEnd !== undefined ? parsedEnd : existing.endDate;
 
       if (effectiveEnd !== null && effectiveEnd <= effectiveStart) {
-        return NextResponse.json(
-          { message: 'endDate must be after startDate' },
-          { status: 400 }
-        );
+        return NextResponse.json({ message: 'endDate must be after startDate' }, { status: 400 });
       }
     }
 
     if (isActive !== undefined) {
       updates.isActive = isActive;
-      // Promoting this season: demote all others
-      if (isActive) {
-        await FOTWSeason.updateMany(
-          { _id: { $ne: id }, isActive: true },
-          { $set: { isActive: false } }
-        );
-      }
     }
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ message: 'No valid fields to update' }, { status: 400 });
     }
 
-    const updated = await FOTWSeason.findByIdAndUpdate(
-      id,
-      { $set: updates },
-      { new: true }
-    );
+    const updated = await mongoose.connection.transaction(async (dbSession) => {
+      const season = await FOTWSeason.findByIdAndUpdate(
+        id,
+        { $set: updates },
+        { new: true, session: dbSession }
+      );
+      if (season?.isActive) await activateSeason(season.startDate, dbSession, id);
+      return season;
+    });
 
     if (!updated) {
       return NextResponse.json({ message: 'Season not found' }, { status: 404 });
@@ -130,10 +122,7 @@ export async function PATCH(
 // DELETE /api/fotw/admin/seasons/:id
 // Removes the season metadata document only. FOTWFilm is never touched.
 // ---------------------------------------------------------------------------
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const [session] = await Promise.all([getServerSession(authOptions), dbConnect()]);
     if (!session?.user?.email || !FOTW_ADMINS.includes(session.user.email)) {
