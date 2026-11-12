@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "seed": "node scripts/seed.mjs",
+    "fotw:watch": "tsx scripts/record-fotw-watch.ts",
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",

@@ -4,8 +4,8 @@ import mongoose from 'mongoose';
 import dbConnect from '@/lib/dbConnect';
 import { authOptions } from '@/lib/auth';
 import { FOTW_ADMINS } from '@/lib/fotwConfig';
-import { FOTWFilm, FOTWUser, FOTWRating } from '@/lib/fotw/schemas';
-import { calculateUserStreak } from '@/lib/fotw/streaks';
+import { FOTWFilm, FOTWUser } from '@/lib/fotw/schemas';
+import { isValidWatchRating, recordAdminWatch } from '@/lib/fotw/recordAdminWatch';
 
 async function isAdmin() {
   const session = await getServerSession(authOptions);
@@ -37,14 +37,7 @@ export async function POST(req: Request) {
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const hasRating = body?.rating !== undefined && body?.rating !== null;
-  if (
-    hasRating &&
-    (typeof body.rating !== 'number' ||
-      !Number.isFinite(body.rating) ||
-      body.rating < 0.5 ||
-      body.rating > 5 ||
-      !Number.isInteger(body.rating * 2))
-  ) {
+  if (hasRating && !isValidWatchRating(body.rating)) {
     return NextResponse.json(
       { message: 'Choose a rating from 0.5 to 5 stars in half-star steps.' },
       { status: 400 }
@@ -65,64 +58,11 @@ export async function POST(req: Request) {
 
   try {
     await dbConnect();
-    // A transaction prevents a partial update between the film and member.
-    // MongoDB retries conflicting writes, including two admins adding the same watch.
-    const result = await mongoose.connection.transaction(async (session) => {
-      const film = await FOTWFilm.findById(body.filmId).session(session);
-      if (!film) return { status: 404, message: 'Film not found.' };
-      const emailPattern = new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
-      const user = await FOTWUser.findOne({ email: emailPattern }).session(session);
-      if (!user && !name) return { status: 400, message: 'Enter a name for the new member.' };
-      // Preserve the existing email so older records and exact-match readers agree.
-      const memberEmail = user?.email || email;
-      const saveRating = async () => {
-        if (!hasRating) return;
-        await FOTWRating.updateOne(
-          { userEmail: memberEmail, filmId: film._id },
-          { $set: { rating: body.rating } },
-          { upsert: true, runValidators: true, session }
-        );
-      };
-      if (film.watchedBy.some((w) => w.userEmail.trim().toLowerCase() === email)) {
-        await saveRating();
-        return {
-          status: 200,
-          alreadyWatched: true,
-          message: hasRating
-            ? `Saved ${body.rating}/5 stars for ${user?.username || user?.name || name || memberEmail} on ${film.title}. Their watch was already recorded.`
-            : 'This member has already watched this film.',
-        };
-      }
-
-      film.watchedBy.push({ userEmail: memberEmail, watchedAt: new Date() });
-      film.watchedCount = film.watchedBy.length;
-      await film.save({ session });
-
-      const allFilms = await FOTWFilm.find({})
-        .select('dateSuggested createdAt lockedAt watchedBy')
-        .session(session)
-        .lean();
-      const streaks = calculateUserStreak(allFilms, memberEmail, user?.longestStreak || 0);
-      const latestWatchedWeek = allFilms
-        .filter((f) => f.watchedBy.some((w) => w.userEmail.trim().toLowerCase() === email))
-        .map((f) => f.dateSuggested || f.createdAt)
-        .sort((a, b) => b.getTime() - a.getTime())[0];
-      await FOTWUser.updateOne(
-        user ? { _id: user._id } : { email: memberEmail },
-        {
-          $set: { ...streaks, lastWatchedWeek: latestWatchedWeek },
-          $setOnInsert: { name },
-          // Preserve imported/legacy totals, matching the regular watch route.
-          $inc: { watchedCount: 1, seasonWatchedCount: 1 },
-        },
-        { upsert: true, session }
-      );
-      await saveRating();
-      return {
-        status: 200,
-        alreadyWatched: false,
-        message: `Recorded ${user?.username || user?.name || name} as having watched ${film.title}${hasRating ? ` with a rating of ${body.rating}/5 stars` : ''}.`,
-      };
+    const result = await recordAdminWatch({
+      filmId: body.filmId,
+      email,
+      name,
+      rating: body.rating,
     });
     const { status, ...payload } = result!;
     return NextResponse.json(payload, { status });
